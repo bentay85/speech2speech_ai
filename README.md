@@ -1,5 +1,5 @@
 ## Introduction
-This project implements a pipecat pipeline that runs a speech to specch AI with a vision component. The AI can see your webcam feed and interact based on the image taken right after you end your speech. It runs fully in Windows with [UV](https://github.com/astral-sh/uv/releases) and [LM Studio](https://lmstudio.ai/) installed.  
+This project implements a pipecat pipeline that runs a speech to speech AI with a vision component. The AI can see your webcam feed and interact based on the image taken right after you end your speech. It runs fully in Windows with [UV](https://github.com/astral-sh/uv/releases) and [LM Studio](https://lmstudio.ai/) installed.  
 ## Project Folder
 Clone the repository and change directory into the project folder.
 
@@ -8,7 +8,7 @@ Download the Piper TTS and Qwen3-VL models. Details in the next section.
 Run LM Studio and load the Qwen3-VL model Enable developer mode and run the local server.  
 ```
 git clone https://github.com/bentay85/speech2speech_ai.git
-cd speech2speec_ai
+cd speech2speech_ai
 uv sync
 uv pip uninstall onnxruntime
 uv run main.py

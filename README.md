@@ -1,11 +1,4 @@
-<iframe 
-  src="https://www.youtube.com/embed/YlkMih_hSKc" 
-  title="YouTube video player"
-  style="width: 100%; aspect-ratio: 16 / 9; border: 0;" 
-  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
-  allowfullscreen
-  loading="lazy">
-</iframe>  
+[![Watch the video](https://img.youtube.com/vi/YlkMih_hSKc/maxresdefault.jpg)](https://youtu.be/YlkMih_hSKc)  
 ## Introduction
 This project implements a pipecat pipeline that runs a speech to speech AI with a vision component. The AI can see your webcam feed and interact based on the image taken right after you end your speech. It runs fully in Windows with [UV](https://github.com/astral-sh/uv/releases) and [LM Studio](https://lmstudio.ai/) installed.  
 ## Project Folder

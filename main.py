@@ -13,6 +13,7 @@ from pipecat.frames.frames import (
 from pipecat.processors.frame_processor import FrameProcessor
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.task import PipelineParams, PipelineTask
+from pipecat.turns.user_mute import AlwaysUserMuteStrategy
 from pipecat.processors.aggregators.llm_response_universal import (
     LLMContext,
     LLMContextAggregatorPair,
@@ -97,26 +98,6 @@ class VisionCaptureProcessor(FrameProcessor):
         if hasattr(self, '_window_initialized') and self._window_initialized:
             cv2.destroyAllWindows()
 
-class MicGate(FrameProcessor):
-    """
-    Prevents the bot from hearing itself (echo cancellation/speaker bleed).
-    """
-    def __init__(self):
-        super().__init__()
-        self._bot_speaking = False
-
-    async def process_frame(self, frame: Frame, direction):
-        await super().process_frame(frame, direction)
-        if isinstance(frame, BotStartedSpeakingFrame):
-            self._bot_speaking = True
-        elif isinstance(frame, BotStoppedSpeakingFrame):
-            self._bot_speaking = False
-
-        if isinstance(frame, InputAudioRawFrame) and self._bot_speaking:
-            return 
-
-        await self.push_frame(frame, direction)
-
 async def main():
     transport = LocalAudioTransport(
         LocalAudioTransportParams(
@@ -126,8 +107,7 @@ async def main():
             audio_out_sample_rate=24000,
         )
     )
-
-    mic_gate = MicGate()
+    
     vad_analyzer = SileroVADAnalyzer(params=VADParams(min_volume=0.05, confidence=0.7, stop_secs=0.2))
     stt = WhisperSTTService(model_path="base.en", device="cuda")
     
@@ -165,13 +145,13 @@ async def main():
             vad_analyzer=vad_analyzer,
             # Set this to a low value to eliminate that long wait.
             # 0.5s is a "sweet spot" for natural conversation.
-            user_turn_stop_timeout=0.5 
+            user_turn_stop_timeout=0.25,
+            user_mute_strategies=[AlwaysUserMuteStrategy()]
         )
     )
 
     pipeline = Pipeline([
         transport.input(),
-        mic_gate,
         stt,
         context_aggregator.user(),
         vision_processor, # Catching the UserStoppedSpeakingFrame here

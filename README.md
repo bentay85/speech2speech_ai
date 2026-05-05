@@ -1,5 +1,9 @@
 ### Speech To Speech AI
 
+
+https://github.com/user-attachments/assets/43b6f3fd-f94d-4d68-b487-b63e0ba47c4a
+
+
 This script runs a speech to speech AI assistant with voice and webcam / desktop screenshot input. 
 
 Script tested on Windows 11 with: 

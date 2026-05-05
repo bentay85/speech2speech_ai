@@ -53,11 +53,11 @@ speech2speech_ai/
 ├── main.py  
 └── models  
    ├── gemma-4-E4B-it-gguf  
-   │   ├── gemma-4-E4B-it-Q4\_K_M.gguf  
+   │   ├── gemma-4-E4B-it-Q4_K_M.gguf  
    │   └── mmproj-F16.gguf  
    ├── piper_tts  
-   │   ├── en\_US-lessac-medium.onnx  
-   │   └── en\_US-lessac-medium.onnx.json  
+   │   ├── en\US-lessac-medium.onnx  
+   │   └── en\US-lessac-medium.onnx.json  
    └── silero  
        └── silero_vad.onnx  
 ```

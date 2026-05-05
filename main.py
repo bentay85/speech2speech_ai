@@ -1,176 +1,344 @@
-import asyncio
+import pyaudio
+import numpy as np
+import wave
+import time
 import cv2
+import queue
+import threading
+import re
+import json
 import base64
+import requests
+import io
+import onnxruntime as ort
+from datetime import datetime
+from piper import PiperVoice
+from mss import MSS
 
-from pipecat.frames.frames import (
-    Frame,
-    InputAudioRawFrame, 
-    BotStartedSpeakingFrame, 
-    BotStoppedSpeakingFrame, 
-    UserStoppedSpeakingFrame,
-    TTSSpeakFrame
+# --- Configuration ---
+VAD_MODEL_PATH = 'models/silero/silero_vad.onnx'
+PIPER_MODEL_PATH = "models/piper_tts/en_US-lessac-medium.onnx"
+LLAMA_SERVER_URL = "http://127.0.0.1:8080/v1/chat/completions"
+
+SAMPLING_RATE = 16000
+CHUNK_SIZE = 512
+CONTEXT_SIZE = 64
+START_THRESHOLD = 0.4   
+STOP_THRESHOLD = 0.1    
+SILENCE_LIMIT = 0.4     
+PRE_ROLL_CHUNKS = 15    
+DEBUG_MODE = True       
+
+# Camera Settings
+TARGET_WIDTH = 1920
+TARGET_HEIGHT = 1080
+
+# Screen Capture Settings
+# On a 4k desktop resolution, capturing 1080p which is 1/4 of the screen. 
+# skipping the top 150 pixels as this is normally the search bar of my browser. 
+MONITOR = {"top": 150, "left": 0, "width": 1920, "height": 1080} 
+
+# --- System Prompt ---
+SYSTEM_PROMPT = (
+    "You are a helpful AI Assistant. Keep your answers concise and conversational. Refer to yourself as I and me as you. The image is either a view from my webcam or my desktop screen. "
 )
-from pipecat.processors.frame_processor import FrameProcessor
-from pipecat.pipeline.pipeline import Pipeline
-from pipecat.pipeline.task import PipelineParams, PipelineTask
-from pipecat.turns.user_mute import AlwaysUserMuteStrategy
-from pipecat.processors.aggregators.llm_response_universal import (
-    LLMContext,
-    LLMContextAggregatorPair,
-    LLMUserAggregatorParams,
-)
-from pipecat.services.openai.llm import OpenAILLMService
-from pipecat.services.whisper.stt import WhisperSTTService
-from pipecat.services.piper.tts import PiperTTSService
-from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
-from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.audio.vad.vad_analyzer import VADParams
-from pipecat.pipeline.runner import PipelineRunner
 
-class VisionCaptureProcessor(FrameProcessor):
-    def __init__(self, context: LLMContext, camera_index=0):
-        super().__init__()
-        self._context = context
-        self._cap = cv2.VideoCapture(camera_index)
-        self._window_name = "Pipecat Vision Preview"
-        self._window_initialized = False  # Track if window is open
+# --- Shared State ---
+audio_queue = queue.Queue()
+tts_queue = queue.Queue() 
+state = {
+    'is_recording': False,
+    'is_inferring': False,
+    'is_speaking': False, 
+    'current_confidence': 0.0,
+    'flash_trigger': False,
+    'running': True,
+    'last_frame': None, 
+    'view_mode': 'webcam', 
+    'history': [{"role": "system", "content": SYSTEM_PROMPT}]
+}
 
-        if not self._cap.isOpened(): 
-            print(f"Warning: Could not open camera at index {camera_index}")
-        else:
-            # Set native resolution to 432x240
-            self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, 432)
-            self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+# --- Utils ---
+def get_ts():
+    return f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]"
 
-    def _get_base64_image(self):
-        ret, frame = self._cap.read()
-        if not ret:
-            return None
+def log(message):
+    print(f"{get_ts()} {message}")
+
+# --- Initialization ---
+log("Loading Silero VAD...")
+vad_session = ort.InferenceSession(VAD_MODEL_PATH, providers=['CPUExecutionProvider'])
+
+log("Loading Piper TTS...")
+piper_voice = PiperVoice.load(PIPER_MODEL_PATH, use_cuda=False)
+
+def tts_worker():
+    """Piper TTS synthesis with correct attribute handling."""
+    while state['running']:
+        try:
+            text = tts_queue.get(timeout=0.1)
+            state['is_speaking'] = True
+            try:
+                for chunk in piper_voice.synthesize(text):
+                    if hasattr(chunk, 'audio_int16_bytes'):
+                        data = chunk.audio_int16_bytes
+                    elif hasattr(chunk, 'audio'):
+                        data = chunk.audio
+                    else:
+                        data = bytes(chunk)
+                    
+                    tts_stream.write(data)
+            except Exception as e:
+                log(f"[!] TTS Playback Error: {e}")
+        except queue.Empty:
+            if not state['is_inferring']:
+                state['is_speaking'] = False
+
+def run_gemma_inference(image_np, audio_bytes):
+    """Multimodal inference via local llama.cpp server."""
+    state['is_inferring'] = True
+    try:
+        # 1. Encode image to JPEG base64
+        ret, buffer = cv2.imencode('.jpg', image_np)
+        b64_img = base64.b64encode(buffer).decode('utf-8')
+        img_url = f"data:image/jpeg;base64,{b64_img}"
+
+        # 2. Encode audio to base64 directly from memory bytes
+        b64_audio = base64.b64encode(audio_bytes).decode('utf-8')
+
+        # 3. Build message payload for API (System + Last 5 Responses + Current Turn)
+        messages = [state['history'][0]]
+        ai_responses = [turn for turn in state['history'] if turn['role'] == 'assistant']
+        messages.extend(ai_responses[-5:])
         
-        # Flip the image horizontally (mirror effect)
-        #frame = cv2.flip(frame, 1)
+        current_content = [
+            {"type": "image_url", "image_url": {"url": img_url}},
+            {"type": "input_audio", "input_audio": {"data": b64_audio, "format": "wav"}}
+        ]
+        messages.append({"role": "user", "content": current_content})
 
-        # Lazy-initialize the window only when the first frame is ready
-        if not self._window_initialized:
-            cv2.namedWindow(self._window_name, cv2.WINDOW_AUTOSIZE)
-            self._window_initialized = True
+        payload = {
+            "messages": messages,
+            "stream": True,
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "max_tokens": 256
+        }
+
+        # 4. Stream response from server
+        response = requests.post(LLAMA_SERVER_URL, json=payload, stream=True, timeout=60)
+        response.raise_for_status()
+
+        print(f"\n{get_ts()} [AI]: ", end="", flush=True)
+        full_response = ""
+        current_sentence = ""
         
-        # Display the image
-        cv2.imshow(self._window_name, frame)
-        cv2.waitKey(1)
-        
-        # Encode frame
-        _, buffer = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-        return base64.b64encode(buffer).decode('utf-8')
-
-    async def process_frame(self, frame: Frame, direction):
-        await super().process_frame(frame, direction)
-
-        if isinstance(frame, UserStoppedSpeakingFrame):
-            print("DEBUG: 📸 User stopped speaking. Capturing and showing window...")
-            b64_image = self._get_base64_image()
-            
-            if b64_image:
-                image_content = {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{b64_image}"}
-                }
-                
-                for msg in reversed(self._context.messages):
-                    if msg["role"] == "user":
-                        if isinstance(msg["content"], str):
-                            msg["content"] = [
-                                {"type": "text", "text": msg["content"]},
-                                image_content
-                            ]
-                        elif isinstance(msg["content"], list):
-                            msg["content"].append(image_content)
+        for line in response.iter_lines():
+            if line:
+                line = line.decode('utf-8')
+                if line.startswith("data: "):
+                    data_str = line[6:]
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        data_json = json.loads(data_str)
+                        if 'choices' in data_json and len(data_json['choices']) > 0:
+                            chunk = data_json['choices'][0].get('delta', {}).get('content', '')
+                            if chunk:
+                                full_response += chunk
+                                print(chunk, end="", flush=True)
+                                current_sentence += chunk
+                                
+                                # Chunking for TTS
+                                parts = re.split(r'(?<=[,.!?\n])\s+', current_sentence)
+                                if len(parts) > 1:
+                                    current_sentence = parts.pop()
+                                    for part in parts:
+                                        clean_text = part.replace('*', '').strip()
+                                        if clean_text:
+                                            tts_queue.put(clean_text)
+                    except json.JSONDecodeError:
+                        pass
                         
-                        print(f"DEBUG: ✅ 432x240 image attached to Context.")
-                        break 
+        if current_sentence.replace('*', '').strip():
+            tts_queue.put(current_sentence.replace('*', '').strip())
+            
+        print("\n")
+        state['history'].append({"role": "assistant", "content": full_response})
 
-        await self.push_frame(frame, direction)
+    except requests.exceptions.RequestException as req_err:
+        log(f"[!] Server Error: {req_err}")
+        log(f"Ensure your llama-server is running and accessible at {LLAMA_SERVER_URL}")
+    except Exception as e:
+        log(f"[!] Inference Error: {e}")
+    finally:
+        state['is_inferring'] = False
 
-    def __del__(self):
-        if hasattr(self, '_cap') and self._cap.isOpened():
-            self._cap.release()
-        # Only attempt to destroy if we actually created it
-        if hasattr(self, '_window_initialized') and self._window_initialized:
-            cv2.destroyAllWindows()
-
-async def main():
-    transport = LocalAudioTransport(
-        LocalAudioTransportParams(
-            audio_in_enabled=True,
-            audio_out_enabled=True,
-            audio_in_sample_rate=16000,
-            audio_out_sample_rate=24000,
-        )
-    )
+def audio_processor():
+    recorded_frames = []
+    pre_roll_buffer = []
+    silence_start_time = None
     
-    vad_analyzer = SileroVADAnalyzer(params=VADParams(min_volume=0.05, confidence=0.7, stop_secs=0.2))
-    stt = WhisperSTTService(model_path="base.en", device="cuda")
-    
-    # Define the initial conversation context
-    messages = [
-        {"role": "system", "content": (
-            "You are an AI assistant in a video call with me. Refer to me as 'you' and yourself as 'I'. Reply in 1-2 short sentences. No lists or bullet points."
-        )},
-    ]
-    context = LLMContext(messages)
+    vad_state = np.zeros((2, 1, 128), dtype=np.float32)
+    context_buffer = np.zeros(CONTEXT_SIZE, dtype=np.float32)
 
-    # Initialize vision processor with the shared context
-    vision_processor = VisionCaptureProcessor(context=context, camera_index=0)
-    
-    llm = OpenAILLMService(
-        api_key="lm-studio",
-        base_url="http://localhost:1234/v1",
-        settings=OpenAILLMService.Settings(
-            model="qwen-3-vl-2b-instruct",
-            max_tokens=80,
-        )
-    )
+    while state['running']:
+        try:
+            data = audio_queue.get(timeout=0.1)
+        except queue.Empty:
+            continue
 
-    tts = PiperTTSService(
-        model_path="en_US-lessac-medium.onnx", 
-        config_path="en_US-lessac-medium.onnx.json",
-        settings=PiperTTSService.Settings(
-            voice="en_US-lessac-medium" 
-        )
-    )
-    
-    context_aggregator = LLMContextAggregatorPair(
-        context,
-        user_params=LLMUserAggregatorParams(
-            vad_analyzer=vad_analyzer,
-            # Set this to a low value to eliminate that long wait.
-            # 0.5s is a "sweet spot" for natural conversation.
-            user_turn_stop_timeout=0.25,
-            user_mute_strategies=[AlwaysUserMuteStrategy()]
-        )
-    )
+        audio_int16 = np.frombuffer(data, np.int16)
+        audio_float32 = audio_int16.astype(np.float32) / 32768.0
+        
+        input_tensor = np.concatenate([context_buffer, audio_float32]).reshape(1, -1)
 
-    pipeline = Pipeline([
-        transport.input(),
-        stt,
-        context_aggregator.user(),
-        vision_processor, # Catching the UserStoppedSpeakingFrame here
-        llm,
-        tts,
-        transport.output(),
-        context_aggregator.assistant(),
-    ])
+        out = vad_session.run(None, {
+            "input": input_tensor,
+            "sr": np.array(SAMPLING_RATE, dtype=np.int64),
+            "state": vad_state
+        })
+        
+        confidence = out[0].item()
+        vad_state = out[1] 
+        
+        context_buffer = audio_float32[-CONTEXT_SIZE:].copy()
+        
+        state['current_confidence'] = confidence
 
-    task = PipelineTask(pipeline, params=PipelineParams(allow_interruptions=True))
+        if not state['is_recording']:
+            pre_roll_buffer.append(data)
+            if len(pre_roll_buffer) > PRE_ROLL_CHUNKS:
+                pre_roll_buffer.pop(0)
+            
+            if confidence > START_THRESHOLD and not state['is_inferring'] and not state['is_speaking']:
+                state['is_recording'] = True
+                recorded_frames = list(pre_roll_buffer)
+                log("Voice detected, listening...")
+        else:
+            recorded_frames.append(data)
+            if confidence < STOP_THRESHOLD:
+                if silence_start_time is None:
+                    silence_start_time = time.time()
+                
+                if (time.time() - silence_start_time) > SILENCE_LIMIT:
+                    log("End of speech detected. Processing capture...")
+                    state['is_recording'] = False
+                    silence_start_time = None
+                    
+                    # Store to in-memory bytes buffer instead of disk
+                    wav_io = io.BytesIO()
+                    wf = wave.open(wav_io, 'wb')
+                    wf.setnchannels(1)
+                    wf.setsampwidth(2)
+                    wf.setframerate(SAMPLING_RATE)
+                    wf.writeframes(b''.join(recorded_frames))
+                    wf.close()
+                    audio_bytes = wav_io.getvalue()
+                    
+                    if state['last_frame'] is not None:
+                        current_img = state['last_frame'].copy()
+                        state['flash_trigger'] = True
+                        threading.Thread(target=run_gemma_inference, args=(current_img, audio_bytes)).start()
+                    recorded_frames = []
+            else:
+                silence_start_time = None
 
-    @task.event_handler("on_pipeline_started")
-    async def on_pipeline_started(task, frame):
-        await asyncio.sleep(0.8)
-        await task.queue_frames([TTSSpeakFrame(text="Hello! How can I help you today?")])
+def audio_callback(in_data, frame_count, time_info, status):
+    if not state['is_inferring'] and not state['is_speaking']:
+        audio_queue.put(in_data)
+    return (None, pyaudio.paContinue)
 
-    print("\n--- ᓚᘏᗢ Local Bot with Piper TTS & Vision ---")
-    runner = PipelineRunner()
-    await runner.run(task)
+# --- Start Hardware ---
+p = pyaudio.PyAudio()
+audio_stream = p.open(format=pyaudio.paInt16, channels=1, rate=SAMPLING_RATE,
+                input=True, frames_per_buffer=CHUNK_SIZE, stream_callback=audio_callback)
+tts_stream = p.open(format=pyaudio.paInt16, channels=1, rate=piper_voice.config.sample_rate,
+                output=True)
 
-if __name__ == "__main__":
-    asyncio.run(main())
+threading.Thread(target=audio_processor, daemon=True).start()
+threading.Thread(target=tts_worker, daemon=True).start()
+
+cap = cv2.VideoCapture(0)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, TARGET_WIDTH)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, TARGET_HEIGHT)
+
+sct = MSS()
+flash_until = 0
+log("--- System Active (Press 'q' to exit, 'Tab' to toggle view) ---")
+
+try:
+    while True:
+        ret, cam_frame = cap.read()
+        if not ret: break
+
+        # Select the active view
+        if state['view_mode'] == 'webcam':
+            current_frame = cam_frame
+        else:
+            # Desktop Capture Logic (1280x960 capture)
+            sct_img = sct.grab(MONITOR)
+            desktop_frame = np.array(sct_img)
+            desktop_frame = cv2.cvtColor(desktop_frame, cv2.COLOR_BGRA2BGR)
+            
+            # Resize desktop frame to match webcam dimensions (640x480)
+            current_frame = cv2.resize(desktop_frame, (TARGET_WIDTH, TARGET_HEIGHT))
+
+        # We are only saving/showing the current_frame now
+        state['last_frame'] = current_frame.copy()
+        display_frame = current_frame.copy()
+        h, w = display_frame.shape[:2]
+
+        if state['flash_trigger']:
+            flash_until = time.time() + 0.4
+            state['flash_trigger'] = False
+
+        if time.time() < flash_until:
+            cv2.rectangle(display_frame, (0, 0), (w, h), (255, 255, 255), 12)
+
+        # Draw State Labels
+        if state['is_recording']:
+            cv2.circle(display_frame, (30, 30), 10, (0, 0, 255), -1)
+            cv2.putText(display_frame, "LISTENING", (50, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        elif state['is_speaking']:
+            cv2.putText(display_frame, "SPEAKING...", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 100, 0), 2)
+        elif state['is_inferring']:
+            cv2.putText(display_frame, "THINKING...", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            
+        # Draw View Mode Indicator
+        mode_text = "WEBCAM" if state['view_mode'] == 'webcam' else "DESKTOP"
+        cv2.putText(display_frame, f"[{mode_text}]", (w - 120, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+        
+        # --- Audio Level Meter (The Bar) ---
+        meter_x = 20
+        meter_y = h - 30
+        meter_w = int(state['current_confidence'] * 150)
+        color = (0, 255, 0) if state['current_confidence'] > START_THRESHOLD else (200, 200, 200)
+        
+        # Background bar
+        cv2.rectangle(display_frame, (meter_x, meter_y), (meter_x + 150, meter_y + 10), (50, 50, 50), -1)
+        # Active level bar
+        cv2.rectangle(display_frame, (meter_x, meter_y), (meter_x + meter_w, meter_y + 10), color, -1)
+        cv2.putText(display_frame, "MIC", (meter_x, meter_y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        
+        cv2.imshow('Gemma-4 Vision/Voice Assistant', display_frame)
+        
+        # Handle keypresses
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
+            break
+        elif key == 9: # ASCII 9 is the Tab key
+            state['view_mode'] = 'desktop' if state['view_mode'] == 'webcam' else 'webcam'
+            log(f"Switched view mode to: {state['view_mode'].upper()}")
+
+finally:
+    log("Shutting down...")
+    state['running'] = False
+    sct.close()
+    audio_stream.stop_stream()
+    audio_stream.close()
+    tts_stream.stop_stream()
+    tts_stream.close()
+    p.terminate()
+    cap.release()
+    cv2.destroyAllWindows()

@@ -8,7 +8,5 @@ wheels/
 
 # Virtual environments
 .venv
-
-# Piper Model Files
-en_US-lessac-medium.onnx
-en_US-lessac-medium.onnx.json
+bin/
+models/

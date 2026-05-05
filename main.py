@@ -106,7 +106,7 @@ def run_gemma_inference(image_np, audio_bytes):
         # 2. Encode audio to base64 directly from memory bytes
         b64_audio = base64.b64encode(audio_bytes).decode('utf-8')
 
-        # 3. Build message payload for API (System + Last 5 Responses + Current Turn)
+        # 3. Build message payload for API
         messages = [state['history'][0]]
         ai_responses = [turn for turn in state['history'] if turn['role'] == 'assistant']
         messages.extend(ai_responses[-5:])
@@ -121,8 +121,7 @@ def run_gemma_inference(image_np, audio_bytes):
             "messages": messages,
             "stream": True,
             "temperature": 0.7,
-            "top_p": 0.9,
-            "max_tokens": 256
+            "top_p": 0.9
         }
 
         # 4. Stream response from server
@@ -131,7 +130,7 @@ def run_gemma_inference(image_np, audio_bytes):
 
         print(f"\n{get_ts()} [AI]: ", end="", flush=True)
         full_response = ""
-        current_sentence = ""
+        unspoken_buffer = ""
         
         for line in response.iter_lines():
             if line:
@@ -143,25 +142,54 @@ def run_gemma_inference(image_np, audio_bytes):
                     try:
                         data_json = json.loads(data_str)
                         if 'choices' in data_json and len(data_json['choices']) > 0:
-                            chunk = data_json['choices'][0].get('delta', {}).get('content', '')
+                            delta = data_json['choices'][0].get('delta', {})
+                            
+                            # Handle specific reasoning fields (like DeepSeek-R1 API structure)
+                            reasoning_chunk = delta.get('reasoning_content', '')
+                            if reasoning_chunk:
+                                print(reasoning_chunk, end="", flush=True)
+                                full_response += reasoning_chunk
+                                continue # Skip adding reasoning text to the TTS buffer
+                                
+                            chunk = delta.get('content', '')
                             if chunk:
                                 full_response += chunk
                                 print(chunk, end="", flush=True)
-                                current_sentence += chunk
+                                unspoken_buffer += chunk
                                 
-                                # Chunking for TTS
-                                parts = re.split(r'(?<=[,.!?\n])\s+', current_sentence)
+                                # 1. Clean out completed <think>...</think> blocks from the TTS buffer
+                                while '<think>' in unspoken_buffer and '</think>' in unspoken_buffer:
+                                    start = unspoken_buffer.find('<think>')
+                                    end = unspoken_buffer.find('</think>') + len('</think>')
+                                    unspoken_buffer = unspoken_buffer[:start] + unspoken_buffer[end:]
+                                    
+                                # 2. If we are currently inside an unclosed <think> tag, wait for it to close
+                                if '<think>' in unspoken_buffer:
+                                    continue
+                                
+                                # 3. Chunking for TTS
+                                parts = re.split(r'(?<=[,.!?\n])\s+', unspoken_buffer)
                                 if len(parts) > 1:
-                                    current_sentence = parts.pop()
+                                    # Keep the last incomplete sentence in the buffer
+                                    unspoken_buffer = parts.pop()
                                     for part in parts:
                                         clean_text = part.replace('*', '').strip()
+                                        # Remove any stray unclosed tags just in case
+                                        clean_text = re.sub(r'<[^>]+>', '', clean_text)
                                         if clean_text:
                                             tts_queue.put(clean_text)
                     except json.JSONDecodeError:
                         pass
                         
-        if current_sentence.replace('*', '').strip():
-            tts_queue.put(current_sentence.replace('*', '').strip())
+        # Flush any remaining text in the unspoken buffer
+        if '<think>' in unspoken_buffer:
+            # If the response abruptly ends during a thought, chop the thought off
+            unspoken_buffer = unspoken_buffer[:unspoken_buffer.find('<think>')]
+            
+        final_clean = unspoken_buffer.replace('*', '').strip()
+        final_clean = re.sub(r'<[^>]+>', '', final_clean)
+        if final_clean:
+            tts_queue.put(final_clean)
             
         print("\n")
         state['history'].append({"role": "assistant", "content": full_response})

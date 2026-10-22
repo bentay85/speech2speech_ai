@@ -13,9 +13,10 @@
 
 --extra-index-url https://download.pytorch.org/whl/cu128
 
-# Deep-learning stack; the +cu128 builds resolve from the extra index above.
-torch==2.7.1
-torchvision==0.22.1
+# Deep-learning stack. The "+cu128" local version can only be satisfied by the
+# extra index above, so pip/uv cannot silently pick the CPU build from PyPI.
+torch==2.7.1+cu128
+torchvision==0.22.1+cu128
 
 # Triton for torch.compile on Windows.
 triton-windows==3.3.1.post21
@@ -64,6 +65,8 @@ PySide6-Essentials>=6.8
 kokoro>=0.9.4
 # Xet-backed Hugging Face downloads for the Kokoro weights and voice files.
 hf_xet>=1.0
+# `hf` CLI used by setup.bat / the manual model-download commands in readme.md.
+huggingface_hub[cli]>=0.34
 # English G2P model used by misaki. It is downloaded automatically on first
 # synthesis if omitted, but pinning it keeps installs reproducible/offline.
 en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl

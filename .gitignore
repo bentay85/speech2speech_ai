@@ -1,17 +1,23 @@
-.DS_store
-.vscode
+# OS / editor
+.DS_Store
+.vscode/
+
+# Python bytecode
 __pycache__/
-logs/
-assets/
-examples/
-sample_results/
-gradio_results/
-gradio_results_multigpu/
-models/
-bin/
-tools/
-.tmp/
-.cache/
+
+# Runtime downloads, scratch and logs (repo root only: a bare "models/"
+# would also ignore src/flash_head/ltx_video/models/, which is source code)
+/logs/
+/assets/
+/examples/
+/sample_results/
+/gradio_results/
+/gradio_results_multigpu/
+/models/
+/bin/
+/tools/
+/.tmp/
+/.cache/
 
 # model weights and binaries (in case they land outside models/ or bin/)
 *.gguf

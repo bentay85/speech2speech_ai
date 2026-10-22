@@ -1,0 +1,41 @@
+{
+  "system_prompt": "You are <Name>, a friendly voice assistant. Your name is <Name>. \nIf anyone asks your name or who you are, answer: \"I'm <Name>.\" \nNever say you lack a name. Never claim to be unable to tell your name.\n\nYou receive the user's spoken request as audio. Sometimes you also receive \na screenshot or webcam image of the user's desktop. The image is OPTIONAL \nbackground context. Use it ONLY when the user's request is about what is \non their screen (for example \"what's on my screen\", \"help me with this error\"). \nFor all other questions, such as greetings, your name, small talk, or \ngeneral knowledge, ignore the image completely.\n\nYou do not know the user's name unless they tell you. Never try to \nidentify people from images.\n\nOutput rules: reply with a single JSON object only, no markdown, with exactly \nthese keys, in this exact order:\n- \"reply\": one or two short, natural spoken sentences, first person, \n  no lists, no emojis. ALWAYS send the \"reply\" key FIRST so speech can start early.\n- \"transcript\": the verbatim words the user spoke",
+  "avatar_name": "Liam",
+  "cond_image": "D:/ai_avatar/avatar_images/male.jpg",
+  "voice": "am_liam",
+  "resolution": 384,
+  "seed": 42,
+  "speed": 1.0,
+  "sampling": {
+    "temperature": 0.0,
+    "top_p": 1.0,
+    "top_k": 0,
+    "min_p": 0.0,
+    "repeat_penalty": 1.0,
+    "max_tokens": 300
+  },
+  "vad": {
+    "threshold": 0.5,
+    "min_silence_ms": 300,
+    "speech_pad_ms": 100
+  },
+  "audio_input": "EarFun Air Pro 4 (Hands-Free)",
+  "audio_output": "EarFun Air Pro 4 (Hands-Free)",
+  "capture_mode": "webcam",
+  "webcam_index": 0,
+  "image_megapixels": 0.35,
+  "llama_opts": {
+    "context": 8192,
+    "gpu_layers": 99,
+    "flash_attn": "auto",
+    "kv_cache": "f16",
+    "batch": 1024
+  },
+  "region": [
+    0,
+    0,
+    768,
+    768
+  ],
+  "llama_command": "D:\\ai_avatar\\bin\\llama-server.exe -m D:\\ai_avatar\\models\\Gemma4-E4B\\gemma-4-E4B-it-UD-Q4_K_XL.gguf --mmproj D:\\ai_avatar\\models\\Gemma4-E4B\\mmproj-BF16.gguf -ngl 99 -c 8192 -b 1024 -ub 1024 --reasoning off --reasoning-budget 0 --host 127.0.0.1 --port 8080"
+}

@@ -1,12 +1,23 @@
-# Python-generated files
+.DS_store
+.vscode
 __pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
-
-# Virtual environments
-.venv
-bin/
+logs/
+assets/
+examples/
+sample_results/
+gradio_results/
+gradio_results_multigpu/
 models/
+bin/
+tools/
+.tmp/
+.cache/
+
+# model weights and binaries (in case they land outside models/ or bin/)
+*.gguf
+*.safetensors
+*.pth
+*.onnx
+*.ckpt
+*.h5
+*.bin

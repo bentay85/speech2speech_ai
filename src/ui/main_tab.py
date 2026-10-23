@@ -106,7 +106,8 @@ def build_main_tab(win):
     name_set_btn = QPushButton("Set name")
     name_set_btn.clicked.connect(win._on_set_name)
     name_set_btn.setToolTip(
-        "Replaces every <Name> in the system prompt; can be repeated."
+        "Replaces every <Name> in the system prompt; can be repeated. When "
+        "the prompt has no <Name>, the name is stated in front of it."
     )
     name_row = QHBoxLayout()
     name_row.addWidget(name_edit, 1)

@@ -77,10 +77,11 @@ IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.webp *.bmp)"
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
 SETTINGS_FILE = ROOT / "settings.json"
 NAME_TOKEN = "<Name>"
+DEFAULT_AVATAR_NAME = "Heart"
 COMPONENTS = [
     ("llm", "LLM server (Gemma 4)"),
-    ("avatar", "Avatar model"),
-    ("vad", "Voice activity detector"),
+    ("avatar", "Avatar model (SoulX FlashHead)"),
+    ("vad", "Voice activity detector (Silero)"),
     ("tts", "Text-to-speech (Kokoro)"),
 ]
 COLORS = {

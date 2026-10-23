@@ -58,9 +58,9 @@ finishes, start the app:
 run-app.bat
 ```
 
-`run-app.bat` uses `pythonw.exe` (no console window); logs go to
-`logs\app.log`. For a console with live logs run
-`.venv\Scripts\python.exe src\app.py` instead.
+`run-app.bat` uses `python.exe`, so a console window shows live logs, and the
+same output also goes to `logs\app.log`. For a window with no console run
+`.venv\Scripts\pythonw.exe src\app.py` instead.
 
 ### Manual install
 
@@ -113,8 +113,8 @@ Manual download commands:
 ```powershell
 .venv\Scripts\hf.exe download Soul-AILab/SoulX-FlashHead-1_3B --local-dir models\SoulX-FlashHead-1_3B
 .venv\Scripts\hf.exe download facebook/wav2vec2-base-960h --local-dir models\wav2vec2-base-960h
-.venv\Scripts\hf.exe download unsloth/gemma-4-E4B-it-GGUF --include "gemma-4-E4B-it-UD-Q4_K_XL.gguf" --include "mmproj-BF16.gguf" --local-dir models\Gemma4-E4B
-.venv\Scripts\hf.exe download hexgrad/Kokoro-82M --include "config.json" --include "kokoro-v1_0.pth" --include "voices/*.pt" --local-dir models\Kokoro-82M
+.venv\Scripts\hf.exe download unsloth/gemma-4-E4B-it-GGUF --include "gemma-4-E4B-it-UD-Q4_K_XL.gguf" "mmproj-BF16.gguf" --local-dir models\Gemma4-E4B
+.venv\Scripts\hf.exe download hexgrad/Kokoro-82M --include "config.json" "kokoro-v1_0.pth" "voices/*.pt" --local-dir models\Kokoro-82M
 New-Item -ItemType Directory -Force models\silero-vad | Out-Null
 Copy-Item .venv\Lib\site-packages\silero_vad\data\silero_vad.onnx models\silero-vad\
 ```
@@ -132,12 +132,28 @@ its CUDA runtime DLLs; `src\app.py` starts and stops it automatically.
 ```powershell
 .venv\Scripts\python.exe src\app.py     # console + window
 .venv\Scripts\pythonw.exe src\app.py    # window only, logs to logs\app.log
-run-app.bat                             # same as pythonw
+run-app.bat                             # same as python.exe
 ```
 
-Wait for the four status dots (LLM, avatar, VAD, TTS) to turn green, then
-press **Start conversation**. Pick a WDM-KS microphone, speak, and the avatar
-replies live; interrupt any time by talking over it.
+Wait for the four status dots — LLM server (Gemma 4), Avatar model
+(SoulX FlashHead), Voice activity detector (Silero) and Text-to-speech
+(Kokoro) — to turn green, then press **Start conversation**. Pick a WDM-KS
+microphone, speak, and the avatar replies live; interrupt any time by talking
+over it.
+
+> **Use headphones.** No acoustic echo cancellation (AEC) is implemented, so
+> the avatar's own speech played through speakers is captured by the
+> microphone and can interrupt or derail the conversation. Use headphones or
+> a headset instead of speakers.
+
+On the first launch, and the first time you select a new avatar resolution,
+the avatar is compiled with `torch.compile`. Its status dot stays on
+`Avatar model (SoulX FlashHead) - compiling <size>px` for a long time — 10+
+minutes is not unusual — before it turns green, and **Start conversation**
+stays disabled meanwhile. This is expected; progress is logged to
+`logs\app.log`. The compiled graphs are cached in `.cache\`, so later launches
+at the same resolution are much faster. Deleting `.cache\` forces a full
+recompile.
 
 In-app controls: avatar condition image (`avatar_images\`, default
 `avatar_images\female.jpg`), avatar name (replaces `<Name>` in the system
@@ -148,9 +164,13 @@ Llama.cpp command, sampling, Silero, Kokoro and FlashHead settings, and a text
 box for typing messages or dropping images instead of speaking. All settings
 are stored in `settings.json` and reloaded on the next launch.
 
-The committed `settings.json` uses repo-relative paths (`avatar_images\male.jpg`)
-and an empty `llama_command`, so the server command is rebuilt from
-`bin\`, `models\` and the sampling options on a fresh clone.
+`settings.json` is local to each machine and gitignored (it may contain
+absolute paths such as the llama.cpp command). On a fresh clone the built-in
+defaults apply: avatar name `Heart`, `avatar_images\female.jpg`, 384px, seed
+42, voice `af_heart`, a built-in system prompt that introduces the avatar by
+name (see `DEFAULT_PROMPT_TEMPLATE` in `src\app.py`), and an empty
+`llama_command`, so the server command is rebuilt from `bin\`, `models\` and
+the sampling options.
 
 | Flag | Default | Meaning |
 | :--- | :--- | :--- |
@@ -175,6 +195,7 @@ of a size can take minutes; graphs are cached in `.cache\`).
 | `llama-server exited with code ...` and a CUDA error | Driver too old for the CUDA 12.4 build, or `bin\` lacks the `cudart`/`cublas` DLLs; re-run `setup.bat`. |
 | `torch.cuda.is_available()` is `False` | CPU wheel installed; reinstall with `uv pip install --python .venv\Scripts\python.exe --reinstall torch torchvision`. |
 | Kokoro output is silent on unknown words | eSpeak NG not installed / not on `PATH`; open a new terminal after installing. |
+| Avatar interrupts itself or replies to its own voice | No AEC is implemented; use headphones or a headset instead of speakers. |
 | `ModuleNotFoundError: flash_head.ltx_video.models...` | The checkout is missing the vendored LTX VAE sources; they are part of this repository — re-clone/pull. |
 | Windows path errors during `torch.compile` | Enable long paths (see section 1). |
 
@@ -242,9 +263,10 @@ Caveats to keep in mind before publishing or redistributing:
 2. **`VAE_LTX` weights are OpenRAIL-M**, not Apache-2.0. They are downloaded
    from Hugging Face and must keep the OpenRAIL-M terms if you redistribute
    them; you cannot relicense them under Apache-2.0.
-3. **`avatar_images/female.jpg` and `male.jpg`** are personal photos. Replace
-   them with images you have the right to distribute (or a CC0/stock source)
-   before making the repository public.
+3. **`avatar_images/female.jpg` and `male.jpg`** are synthetic images generated
+   with Gemini, not photos of real people. If you replace them, use images you
+   have the right to distribute (or a CC0/stock source) before making the
+   repository public.
 4. If you publish a release that includes compiled binaries of the vendored
    code, add a `NOTICE` file with the Wan/SoulX attribution; Apache-2.0
    requires preserving the existing copyright headers (they are already kept
@@ -254,7 +276,8 @@ Caveats to keep in mind before publishing or redistributing:
 
 - Single NVIDIA GPU: LLM + projector ~5.7 GB, avatar at 384p ~5 GB, Kokoro on
   GPU (~11.5 GB of 16 GB total).
-- Compiled graphs cache in `.cache\`; delete to force a rebuild. `.tmp\` is
+- Compiled graphs cache in `.cache\`; delete to force a rebuild (the next
+  launch then spends a long time recompiling, see section 4). `.tmp\` is
   gitignored scratch.
 - Voice-loop audio I/O uses PortAudio; only `Windows WDM-KS` input devices are
   offered for lowest latency.

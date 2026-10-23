@@ -23,6 +23,7 @@ from pathlib import Path
 # configures std logging, sets cache env vars used by torch et al.
 from runtime import (
     COMPONENTS,
+    DEFAULT_AVATAR_NAME,
     HEAVY_IMPORT_LOCK,
     IMAGE_FILTER,
     NAME_TOKEN,
@@ -54,7 +55,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-import llm as llm_client
 from capture import (
     DESKTOP_DWELL_S,
     CaptureManager,
@@ -70,6 +70,31 @@ from ui.main_tab import build_main_tab
 from ui.model_tab import build_model_tab
 from ui.status_panel import build_status_panel, refresh_status
 from widgets import ChatInput, populate_device_combos, show_pixmap
+
+
+# Built-in system prompt used when settings.json has no saved prompt. The
+# <Name> placeholder is replaced with the avatar name (see _apply_name).
+DEFAULT_PROMPT_TEMPLATE = (
+    "You are <Name>, a friendly voice assistant. Your name is <Name>. \n"
+    "If anyone asks your name or who you are, answer: \"I'm <Name>.\" \n"
+    "Never say you lack a name. Never claim to be unable to tell your name.\n"
+    "\n"
+    "You receive the user's spoken request as audio. Sometimes you also receive \n"
+    "a screenshot or webcam image of the user's desktop. The image is OPTIONAL \n"
+    "background context. Use it ONLY when the user's request is about what is \n"
+    "on their screen (for example \"what's on my screen\", \"help me with this error\"). \n"
+    "For all other questions, such as greetings, your name, small talk, or \n"
+    "general knowledge, ignore the image completely.\n"
+    "\n"
+    "You do not know the user's name unless they tell you. Never try to \n"
+    "identify people from images.\n"
+    "\n"
+    "Output rules: reply with a single JSON object only, no markdown, with exactly \n"
+    "these keys, in this exact order:\n"
+    "- \"reply\": one or two short, natural spoken sentences, first person, \n"
+    "  no lists, no emojis. ALWAYS send the \"reply\" key FIRST so speech can start early.\n"
+    "- \"transcript\": the verbatim words the user spoke"
+)
 
 
 class MainWindow(QMainWindow):
@@ -131,9 +156,11 @@ class MainWindow(QMainWindow):
         self.base_seed = self.args.base_seed
         self.avatar_started_size = None
         self.avatar_note = ""
-        self._avatar_name = str(s.get("avatar_name", "") or "").strip()
+        self._avatar_name = (
+            str(s.get("avatar_name", "") or "").strip() or DEFAULT_AVATAR_NAME
+        )
         saved_prompt = str(s.get("system_prompt", "") or "").strip()
-        self._prompt_template = saved_prompt or llm_client.SYSTEM_PROMPT
+        self._prompt_template = saved_prompt or DEFAULT_PROMPT_TEMPLATE
         self._system_prompt = self._apply_name(self._prompt_template)
         self.setWindowTitle("Speech to Speech Avatar")
         self.setMinimumSize(1280, 760)
@@ -469,7 +496,16 @@ class MainWindow(QMainWindow):
             self._apply_capture()
 
     def _apply_name(self, template):
-        return template.replace(NAME_TOKEN, self._avatar_name or "Assistant")
+        name = self._avatar_name or DEFAULT_AVATAR_NAME
+        if NAME_TOKEN in template:
+            return template.replace(NAME_TOKEN, name)
+        # Prompts saved before the <Name> placeholder existed, or hand-written
+        # ones that omit it, still have to tell the model who it is.
+        return (
+            f"Your name is {name}. If anyone asks your name or who you are, "
+            f"answer that you are {name}. Never claim not to know your name. "
+            + template
+        )
 
     def _on_set_name(self):
         name = self.name_edit.text().strip()

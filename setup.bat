@@ -97,8 +97,12 @@ if exist "models\Gemma4-E4B\gemma-4-E4B-it-UD-Q4_K_XL.gguf" if exist "models\Gem
     echo [skip] Gemma 4 E4B GGUF files already present.
 ) else (
     echo [get ] unsloth/gemma-4-E4B-it-GGUF ^(Q4_K_XL + mmproj, ~several GB^)...
-    "%HF%" download unsloth/gemma-4-E4B-it-GGUF --include "gemma-4-E4B-it-UD-Q4_K_XL.gguf" --include "mmproj-BF16.gguf" --local-dir "models\Gemma4-E4B"
+    rem One --include with several values: a repeated --include flag overwrites
+    rem the previous one in the hf CLI, which would silently skip the GGUF.
+    "%HF%" download unsloth/gemma-4-E4B-it-GGUF --include "gemma-4-E4B-it-UD-Q4_K_XL.gguf" "mmproj-BF16.gguf" --local-dir "models\Gemma4-E4B"
     if errorlevel 1 goto :fail_models
+    if not exist "models\Gemma4-E4B\gemma-4-E4B-it-UD-Q4_K_XL.gguf" goto :fail_models
+    if not exist "models\Gemma4-E4B\mmproj-BF16.gguf" goto :fail_models
 )
 
 rem --- Kokoro TTS weights + all voice presets ---
@@ -106,8 +110,11 @@ if exist "models\Kokoro-82M\kokoro-v1_0.pth" if exist "models\Kokoro-82M\voices\
     echo [skip] Kokoro-82M weights and voices already present.
 ) else (
     echo [get ] hexgrad/Kokoro-82M ^(model + voices, ~several GB^)...
-    "%HF%" download hexgrad/Kokoro-82M --include "config.json" --include "kokoro-v1_0.pth" --include "voices/*.pt" --local-dir "models\Kokoro-82M"
+    "%HF%" download hexgrad/Kokoro-82M --include "config.json" "kokoro-v1_0.pth" "voices/*.pt" --local-dir "models\Kokoro-82M"
     if errorlevel 1 goto :fail_models
+    if not exist "models\Kokoro-82M\config.json" goto :fail_models
+    if not exist "models\Kokoro-82M\kokoro-v1_0.pth" goto :fail_models
+    if not exist "models\Kokoro-82M\voices\*.pt" goto :fail_models
 )
 
 rem --- Silero VAD: shipped inside the silero-vad pip package, copy it out.

@@ -2,6 +2,9 @@
 .DS_Store
 .vscode/
 
+# Local per-machine settings (may contain absolute paths)
+/settings.json
+
 # Python bytecode
 __pycache__/
 

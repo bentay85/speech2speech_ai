@@ -67,68 +67,96 @@ if not exist "%HF%" (
     )
     if errorlevel 1 goto :fail_deps
 )
+if not exist "%HF%" (
+    echo [FAIL] The "hf" CLI is missing at %HF%; model downloads cannot run.
+    echo        Re-install with: "%PY%" -m pip install "huggingface_hub[cli]"
+    pause
+    exit /b 1
+)
 
 rem ------------------------------------------------------------- 2. models
 echo.
 echo [models] Checking model weights in models\...
+rem NOTE: never chain two "if exist" tests straight into an "(...) else (...)"
+rem block. cmd.exe attaches the else to the LAST if, so when the first test
+rem fails neither branch runs and the download is silently skipped. Instead
+rem every check clears HAVE, which is then tested once.
 
-rem --- SoulX FlashHead avatar ---
-dir /b "models\SoulX-FlashHead-1_3B\*" >nul 2>nul
-if %errorlevel% equ 0 (
+mkdir "models" 2>nul
+
+rem --- SoulX FlashHead avatar (Model_Lite + VAE_LTX are what the app loads) ---
+set "HAVE=1"
+if not exist "models\SoulX-FlashHead-1_3B\Model_Lite\diffusion_pytorch_model.safetensors" set "HAVE="
+if not exist "models\SoulX-FlashHead-1_3B\VAE_LTX\diffusion_pytorch_model.safetensors" set "HAVE="
+if defined HAVE (
     echo [skip] SoulX-FlashHead-1_3B already present.
 ) else (
-    echo [get ] Soul-AILab/SoulX-FlashHead-1_3B ...
+    echo [get ] Soul-AILab/SoulX-FlashHead-1_3B ^(avatar DiT + VAE, ~7 GB^)...
     "%HF%" download Soul-AILab/SoulX-FlashHead-1_3B --local-dir "models\SoulX-FlashHead-1_3B"
     if errorlevel 1 goto :fail_models
 )
+if not exist "models\SoulX-FlashHead-1_3B\Model_Lite\diffusion_pytorch_model.safetensors" goto :fail_models
+if not exist "models\SoulX-FlashHead-1_3B\VAE_LTX\diffusion_pytorch_model.safetensors" goto :fail_models
 
 rem --- wav2vec2 (avatar audio frontend) ---
-dir /b "models\wav2vec2-base-960h\*" >nul 2>nul
-if %errorlevel% equ 0 (
+set "HAVE=1"
+if not exist "models\wav2vec2-base-960h\config.json" set "HAVE="
+if not exist "models\wav2vec2-base-960h\model.safetensors" set "HAVE="
+if defined HAVE (
     echo [skip] wav2vec2-base-960h already present.
 ) else (
     echo [get ] facebook/wav2vec2-base-960h ...
     "%HF%" download facebook/wav2vec2-base-960h --local-dir "models\wav2vec2-base-960h"
     if errorlevel 1 goto :fail_models
 )
+if not exist "models\wav2vec2-base-960h\config.json" goto :fail_models
+if not exist "models\wav2vec2-base-960h\model.safetensors" goto :fail_models
 
-rem --- Gemma 4 E4B GGUF + audio projector ---
-if exist "models\Gemma4-E4B\gemma-4-E4B-it-UD-Q4_K_XL.gguf" if exist "models\Gemma4-E4B\mmproj-BF16.gguf" (
+rem --- Gemma 4 E4B GGUF + audio projector (the LLM) ---
+set "HAVE=1"
+if not exist "models\Gemma4-E4B\gemma-4-E4B-it-UD-Q4_K_XL.gguf" set "HAVE="
+if not exist "models\Gemma4-E4B\mmproj-BF16.gguf" set "HAVE="
+if defined HAVE (
     echo [skip] Gemma 4 E4B GGUF files already present.
 ) else (
-    echo [get ] unsloth/gemma-4-E4B-it-GGUF ^(Q4_K_XL + mmproj, ~several GB^)...
+    echo [get ] unsloth/gemma-4-E4B-it-GGUF ^(Q4_K_XL + mmproj, ~5.8 GB^)...
     rem One --include with several values: a repeated --include flag overwrites
     rem the previous one in the hf CLI, which would silently skip the GGUF.
     "%HF%" download unsloth/gemma-4-E4B-it-GGUF --include "gemma-4-E4B-it-UD-Q4_K_XL.gguf" "mmproj-BF16.gguf" --local-dir "models\Gemma4-E4B"
     if errorlevel 1 goto :fail_models
-    if not exist "models\Gemma4-E4B\gemma-4-E4B-it-UD-Q4_K_XL.gguf" goto :fail_models
-    if not exist "models\Gemma4-E4B\mmproj-BF16.gguf" goto :fail_models
 )
+if not exist "models\Gemma4-E4B\gemma-4-E4B-it-UD-Q4_K_XL.gguf" goto :fail_models
+if not exist "models\Gemma4-E4B\mmproj-BF16.gguf" goto :fail_models
 
 rem --- Kokoro TTS weights + all voice presets ---
-if exist "models\Kokoro-82M\kokoro-v1_0.pth" if exist "models\Kokoro-82M\voices\*.pt" (
+set "HAVE=1"
+if not exist "models\Kokoro-82M\config.json" set "HAVE="
+if not exist "models\Kokoro-82M\kokoro-v1_0.pth" set "HAVE="
+if not exist "models\Kokoro-82M\voices\*.pt" set "HAVE="
+if defined HAVE (
     echo [skip] Kokoro-82M weights and voices already present.
 ) else (
-    echo [get ] hexgrad/Kokoro-82M ^(model + voices, ~several GB^)...
+    echo [get ] hexgrad/Kokoro-82M ^(model + voices, ~0.5 GB^)...
     "%HF%" download hexgrad/Kokoro-82M --include "config.json" "kokoro-v1_0.pth" "voices/*.pt" --local-dir "models\Kokoro-82M"
     if errorlevel 1 goto :fail_models
-    if not exist "models\Kokoro-82M\config.json" goto :fail_models
-    if not exist "models\Kokoro-82M\kokoro-v1_0.pth" goto :fail_models
-    if not exist "models\Kokoro-82M\voices\*.pt" goto :fail_models
 )
+if not exist "models\Kokoro-82M\config.json" goto :fail_models
+if not exist "models\Kokoro-82M\kokoro-v1_0.pth" goto :fail_models
+if not exist "models\Kokoro-82M\voices\*.pt" goto :fail_models
 
 rem --- Silero VAD: shipped inside the silero-vad pip package, copy it out.
 if exist "models\silero-vad\silero_vad.onnx" (
     echo [skip] silero_vad.onnx already present.
 ) else (
-    if exist ".venv\Lib\site-packages\silero_vad\data\silero_vad.onnx" (
+    if exist "%VENV%\Lib\site-packages\silero_vad\data\silero_vad.onnx" (
         echo [get ] Copying silero_vad.onnx from the silero-vad package...
         mkdir "models\silero-vad" 2>nul
-        copy /y ".venv\Lib\site-packages\silero_vad\data\silero_vad.onnx" "models\silero-vad\" >nul
+        copy /y "%VENV%\Lib\site-packages\silero_vad\data\silero_vad.onnx" "models\silero-vad\" >nul
     ) else (
         echo [warn] silero_vad.onnx not found in site-packages; reinstall requirements.
     )
 )
+if not exist "models\silero-vad\silero_vad.onnx" goto :fail_vad
 
 rem ------------------------------------------------------------ 3. llama.cpp
 echo.
@@ -212,9 +240,17 @@ exit /b 1
 
 :fail_models
 echo.
-echo [FAIL] Model download failed. Check your connection (or set the
-echo        HF_ENDPOINT mirror line at the top of this file) and re-run:
-echo        downloads resume where they left off.
+echo [FAIL] Model download failed or ended with files still missing. Check
+echo        your connection (or set the HF_ENDPOINT mirror line at the top of
+echo        this file) and re-run: downloads resume where they left off.
+pause
+exit /b 1
+
+:fail_vad
+echo.
+echo [FAIL] models\silero-vad\silero_vad.onnx is missing. Re-install the
+echo        requirements, then re-run this script:
+echo        uv pip install --python .venv\Scripts\python.exe --reinstall silero-vad
 pause
 exit /b 1
 
